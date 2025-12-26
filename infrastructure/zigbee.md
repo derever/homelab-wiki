@@ -2,10 +2,10 @@
 title: Zigbee
 description:
 published: true
-date: 2025-12-26T17:45:50+00:00
+date: 2025-12-26T17:48:51+00:00
 tags:
 editor: markdown
-dateCreated: 2025-12-26T17:45:50+00:00
+dateCreated: 2025-12-26T17:48:51+00:00
 ---
 
 ## Services
