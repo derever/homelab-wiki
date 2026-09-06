@@ -138,6 +138,22 @@ Ein Neustart von journald verwirft für einige Sekunden Container-Zeilen. Das is
 
 Damit die Container-Last das Journal nicht sprengt, setzt die Rolle auf den Clients ein journald-Drop-in mit 3 GB und sieben Tagen Aufbewahrung (abgeleitet aus der Grösse der Root-Partition) und verdoppelt das Rate-Limit. Für `docker.service` selbst schaltet `roles/nomad` das Rate-Limit ganz ab, weil dort alle Container-Zeilen zusammenlaufen.
 
+## Rückkopplung zwischen Auswertung und Log-Strom
+
+Der Journal-Weg hat eine Folge, die keine der beteiligten Komponenten allein sichtbar macht: Grafana läuft selbst als Container auf einem Client-Node. Seine Ausgabe steht damit im Journal desselben Hosts und landet als `source="journal"` in Loki, also in genau der Datenbank, gegen die es seine Log-Regeln auswertet. Zwei Massnahmen halten diesen Kreis offen, beide seit dem 06.09.2026 live.
+
+**Container-Zeilen aus den Host-Regeln ausschliessen.** Container-Ausgabe stellt den grössten Teil des Journals, gemessen rund 37'000 von 47'000 Zeilen je Viertelstunde. Ohne Ausschluss durchsucht jede Journal-Regel die gesamte Container-Ausgabe des Clusters statt der Host-Meldungen, die sie meint. Die Regeln tragen deshalb den Matcher `nomad_job=""`, siehe [Konventionen der Loki-Regeln](./referenz.md#konventionen-der-loki-regeln).
+
+**Das Query-Log von Grafana stummschalten.** Der Loki-Datasource-Logger schrieb jede Regel-Auswertung samt der vollständigen LogQL-Query im Klartext nach stdout, also auch das Suchmuster der Regel. Eine Regel fand damit ihre eigene Query-Zeile und feuerte sich selbst, im Minutentakt und selbsterhaltend. Am 06.09.2026 entstanden so zehn Incidents in zwei Stunden, sieben davon kritisch und alle unecht. `grafana.nomad` filtert den Logger `tsdb.loki` deshalb auf `critical`.
+
+::: warning critical, nicht warn
+Ein Filter auf `warn` genügt nicht. Die Zeile "Error received from Loki" trägt dieselbe Query unkodiert am Ende und würde ihn überleben. Sie entsteht gerade bei einem Loki- oder DNS-Aussetzer, also im ungeeignetsten Moment.
+:::
+
+Der Preis ist bewusst in Kauf genommen: Loki-Fehler stehen nicht mehr im Grafana-Log. Sie bleiben über den `ngalert`-Logger, den periodischen `loki-deadman` und dessen Kuma-Monitor sichtbar.
+
+Das Muster gilt allgemein für jeden Alert-Evaluator, dessen eigene Logs in die Datenbank fliessen, die er abfragt. Ein Zeilenfilter reicht dagegen nicht: Er müsste jedes Suchmuster kennen, das je in einer Regel steht.
+
 ## Journal-Sammlung durch die Ansible-Rolle
 
 Der systemd-Dienst läuft auf allen Hosts ausser den Traefik-VMs. Die Konfiguration erzeugt Ansible aus `ansible/roles/alloy/templates/config.alloy.j2`.
