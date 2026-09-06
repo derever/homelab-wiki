@@ -153,7 +153,7 @@ Profilarr hält die Quality Profiles und Custom Formats in Sonarr/Radarr synchro
 
 Der Fluss von Logs und Metriken bis zur Visualisierung:
 
-1. Alle Container senden ihre Logs an Alloy (Log-Collector).
+1. Alle Container schreiben ihre Logs über den journald-Log-Treiber ins Journal des Nodes, wo Alloy (Log-Collector) sie zusammen mit den übrigen Journal- und Datei-Zeilen liest.
 2. Alloy schreibt die Logs in Loki (Log-Storage).
 3. Grafana (Dashboards) visualisiert Logs aus Loki und Metriken aus InfluxDB.
 

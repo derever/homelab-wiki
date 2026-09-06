@@ -50,25 +50,32 @@ Die DRBD-Überwachung ist seit 2026-07-05 zustandsbasiert: Alarmiert wird auf di
 
 **Hinweis:** Die Alert-Annotations verwenden Grafana Template-Variablen (`$labels`, `$values`), die für Nomads Template-Engine escaped werden müssen (doppelte geschweifte Klammern in HCL-Templates).
 
+### Konventionen der Loki-Regeln
+
+- **`execErrState: OK`** auf allen Loki-Regeln. Ein Query-Fehler ist kein Fachalarm: Beim Loki-Neustart am 06.09.2026 erzeugten genau die drei Regeln, die damals noch auf `Alerting` standen, drei falsche kritische Incidents, während keine der übrigen feuerte.
+- **`node` statt `host`** als Kollektor-Label in Selektor, Aggregation und Annotation. Das Journal trägt seit dem Wegfall der Doppelerfassung nur noch `node`, `host` bleibt dem Syslog-Ursprung vorbehalten.
+- **Annotation `lint: skip`** kennzeichnet Regeln, deren Selektor legitim keine Serie liefert, weil er auf eine Oneshot-Unit zielt. Der [Rule-Lint](./alloy.md#selbstuberwachung-der-log-pipeline) überspringt sie dann, statt sie als stumm zu melden.
+- **Label `detector`** auf Down-Detektor-Regeln, deren fachliche Aussage gerade der NoData-Zustand ist. Keep stuft NoData nur ohne dieses Label zur Pipeline-Störung herab, siehe [Keep](./keep/index.md#signal-und-pipeline-storungen).
+
 ## Log-Quellen
 
-Diese Tabelle ist die SSOT für die Zuordnung Host -> Methode -> Source-Label. Deployment-Details, Playbook-Tabelle und Label-Schema stehen in [Grafana Alloy](./alloy.md).
+Diese Tabelle ist die SSOT für die Zuordnung Quelle -> Methode -> Labels. Deployment-Details, Playbook-Tabelle und vollständiges Label-Schema stehen in [Grafana Alloy](./alloy.md).
 
-| Host / Gruppe | Methode | Source-Label |
+| Quelle | Methode | Labels |
 | :--- | :--- | :--- |
-| vm-nomad-client-04/05/06 | Nomad System-Job | -- (Container via `nomad_task`) |
-| vm-nomad-server-04/05/06 | Ansible (systemd) | `journal` |
-| vm-nomad-client-04/05/06 | Ansible (systemd) | `nomad-client` |
-| vm-traefik-01/02 | Standalone-Config (traefik-ha) | `docker-compose` |
-| pve00, pve01, pve02 | Ansible (systemd) | `proxmox` |
-| CheckMK | Ansible (systemd) | `checkmk` |
-| PBS | Ansible (systemd) | `pbs` |
-| Datacenter Manager | Ansible (systemd) | `datacenter-manager` |
-| lxc-dns-01/02 | Ansible (systemd) | `dns` |
-| Zigbee-Node | Ansible (systemd) | `iot` |
-| Vault Audit-Log (Server VMs) | Ansible (systemd) | `vault-audit` |
-| Synology NAS | Syslog → Alloy Receiver | `syslog` |
-| UniFi | Syslog → Alloy Receiver | `syslog` |
+| vm-nomad-server-04/05/06 | Ansible-Rolle `alloy` (systemd) | `source=journal` |
+| vm-nomad-client-04/05/06 | Ansible-Rolle `alloy` (systemd) | `source=journal` |
+| Container auf den Client-Nodes | Docker-Log-Treiber `journald`, gelesen von der Rolle | `source=journal` plus `nomad_job`, `nomad_task`, `nomad_group`, `nomad_namespace` |
+| Vault Audit-Log (aktiver Server) | zweites Audit-Device Typ `syslog` ins Journal | `source=journal`, `app=vault-audit`, `signal=security` |
+| vm-traefik-01/02 | Compose-Alloy (traefik-ha) | `source=docker-compose` |
+| pve00, pve01, pve02 | Ansible-Rolle `alloy` (systemd) | `source=proxmox` |
+| CheckMK | Ansible-Rolle `alloy` (systemd) | `source=checkmk` |
+| PBS | Ansible-Rolle `alloy` (systemd) | `source=pbs` |
+| Datacenter Manager | Ansible-Rolle `alloy` (systemd) | `source=datacenter-manager` |
+| Logdateien (pveproxy, pve-firewall, CheckMK-Site, PBS, LINSTOR) | `local.file_match` plus `loki.source.file` | `app` je Datei, dazu `filename` |
+| UDM-Pro, Access Points, Switches | Syslog RFC3164 an den Traefik-VIP | `job=syslog`, `host` |
+| NAS HomeServer | Syslog RFC3164 an vm-nomad-client-06 | `job=syslog`, `host` |
+| linstor-csi | Docker-Quelle des Nomad-System-Jobs | `nomad_task` |
 
 ## Log-Levels
 

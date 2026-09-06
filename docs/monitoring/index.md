@@ -31,7 +31,7 @@ Die Referenz-Tabellen (Alert-Regeln, Log-Quellen, Log-Levels) stehen in der [Mon
 | **InfluxDB** | Time-Series Metriken-Backend | [influx.ackermannprivat.ch](https://influx.ackermannprivat.ch) |
 | **Telegraf** | Metriken-Collector (Prometheus, Exec, File) | — (Nomad Job) |
 | **Loki** | Zentrales Log-Storage | [loki.ackermannprivat.ch](https://loki.ackermannprivat.ch) |
-| **Grafana Alloy** | Log-Collector (System-Job + systemd + Docker) | — (läuft auf 15 Nodes) |
+| **Grafana Alloy** | Log-Collector (systemd auf jedem Host, Compose auf den Traefik-VMs) | — (kein eigenes UI) |
 | **CheckMK** | Host-Level Monitoring (CPU, RAM, Disk, SMART) | [monitoring.ackermannprivat.ch](https://monitoring.ackermannprivat.ch) |
 | **Uptime Kuma** | Synthetic-Monitoring (Kern-Infra + Flächenabdeckung + Push) | [uptime.ackermannprivat.ch](https://uptime.ackermannprivat.ch) |
 | **USV (APC)** | USV-Monitoring via NUT-Server und Grafana Alerting | [graf.ackermannprivat.ch](https://graf.ackermannprivat.ch) (`ups-apc-dashboard`) |
@@ -61,7 +61,7 @@ mq: Metrik-Quellen {
 }
 lokal: Container-Logs + Journale {
   class: svc
-  tooltip: Nomad-Container via Docker-Socket, VMs/Proxmox/Infra-Journale via Ansible-Alloy
+  tooltip: Container über den journald-Log-Treiber, alle Journale via Ansible-Alloy
 }
 netz: NAS + UniFi { class: svc }
 
@@ -91,7 +91,7 @@ Lesehilfe:
 1. [Telegraf](./influxdb.md#telegraf-inputs) scrapt die Prometheus-Endpoints (Nomad-Cluster, Linstor, DRBD Reactor u.a.) und fragt Media-Stats via exec/file ab -- Initiator ist immer Telegraf.
 2. Telegraf schreibt die Zeitreihen ins [InfluxDB](./influxdb.md) (`influxdb.service.consul:8086`, Bucket `telegraf`).
 3. Drei Quellen schreiben ohne Telegraf-Umweg direkt: Proxmox (nativer Export), der [CheckMK-Forwarder](./influxdb.md#checkmk-als-zusatzliche-quelle) und die lokalen [Telegraf-Host-Agenten](./influxdb.md#node-metriken-ohne-nfs-telegraf-host-agent) der Nodes.
-4. [Grafana Alloy](./alloy.md) liest auf jedem Node lokal: Container-Logs über den Docker-Socket, systemd-Journale über die Ansible-Variante.
+4. [Grafana Alloy](./alloy.md) liest auf jedem Host das systemd-Journal und ausgewählte Logdateien. Container-Zeilen stehen seit dem journald-Log-Treiber ebenfalls im Journal und brauchen keinen eigenen Sammelweg mehr.
 5. NAS und UniFi senden ihre Logs selbst als Syslog an den Alloy-Receiver (Port 1514) -- verbindungslos, darum gestrichelt.
 6. Alloy pusht alle Logs an [Loki](#zentrales-logging-loki-alloy) (`loki.service.consul:3100`).
 7. Grafana fragt InfluxDB bei jedem Dashboard-Aufruf und jeder Alert-Auswertung ab (InfluxQL, für Alt-Queries Flux).
@@ -235,6 +235,8 @@ Die Ausfall-Fragen, die das Big Picture beantworten muss -- je mit dem Mechanism
 
 - **Was, wenn InfluxDB voll oder tot ist?** Telegraf-Writes schlagen fehl und die Metrik-Alerts (Pfad 3) werden blind. Den Totalausfall fängt der periodische Job `metrics-deadman` (alle 5 Minuten): er prüft, ob InfluxDB frische Nomad-Metriken hat, und pusht einen Kuma-Heartbeat -- bleibt der aus, alarmiert Kuma. Hintergrund: Ein Telegraf/InfluxDB-Totalausfall blieb im Juni 2026 neun Tage unbemerkt. Gegen Volllaufen: Retention 90 Tage plus [Downsampling-Tasks](./betrieb.md#influxdb-downsampling-tasks); die Retention-Policies müssen manuell gesetzt sein (siehe [InfluxDB & Telegraf](./influxdb.md#buckets)).
 
+- **Was, wenn Loki tot ist oder eine Quelle verstummt?** Die log-basierten Alert-Regeln laufen dann in einen Query-Fehler. Weil alle auf `execErrState: OK` stehen, feuert keine von ihnen -- ein Query-Fehler ist kein Fachalarm, und die Alternative wären falsche kritische Incidents bei jedem Loki-Neustart. Sichtbar wird der Ausfall durch den periodischen Job `loki-deadman`, der alle fünf Minuten den globalen Ingest und jede erwartete Quelle prüft und an Uptime Kuma pusht. Eine Quelle, die still verstummt, fällt damit nach rund zwanzig Minuten auf, ein einzelner Aussetzer erzeugt keinen Alarm. Verstummt sie ohne dass jemand die Regel dazu anpasst, meldet zusätzlich der tägliche `loki-rule-lint` den dann leeren Selektor. Alloy puffert während eines Loki-Ausfalls und liefert nach, sein Retry-Budget reicht rund achteinhalb Minuten.
+
 - **Was, wenn Grafana down ist?** Metrik- und Log-Alerts (Pfad 2/3) sind still -- die Schwellwert-Logik lebt ausschliesslich in Grafana. Der Check-Pfad läuft weiter: Uptime Kuma probt Grafana selbst (externe Watchdog-Probe), CheckMK und Kuma melden unabhängig weiter.
 
 - **Was, wenn die CheckMK-VM down ist?** Alle Special-Agent- und SNMP-Targets (NAS-Hardware, Proxmox-Sicht) sind silent -- CheckMK ist Single-Instance ohne Failover. Eine Kuma-Probe gegen die CheckMK-Site macht den Ausfall sichtbar; die Innensicht der VMs liefert weiterhin der Sammelpfad.
@@ -289,21 +291,30 @@ Alle Monitore senden via Single-Notifier "Keep" mit Default Enabled; Severity- u
 ### Loki (Log-Storage)
 
 - **Nomad Job:** `monitoring/loki.nomad` (Service-Job, Priority 100)
-- **Storage:** Linstor CSI Volume `loki-data` (repliziert)
+- **Storage:** Linstor CSI Volume `loki-data` (repliziert), Filesystem-Backend
 - **Port:** 3100 (statisch)
 - **Retention:** 30 Tage (720h)
+- **Stream-Limit:** 5'000 aktive Streams je Instanz
 - **Zugang:** `loki.ackermannprivat.ch` (intern, `intern-auth@file`)
 - **Consul DNS:** `loki.service.consul`
 
+Loki ist eine Single-Instance je Cluster. Das Speicher-Limit ist so bemessen, dass der Page-Cache nicht am cgroup-Limit klebt, denn Loki hält seine Chunks im Dateisystem-Cache. Object-Storage wurde geprüft und verworfen: die nächtlichen Push-Fehler stammen nicht vom Backend, sondern vom Einfrieren des Gast-Dateisystems beim VM-Backup, und ein Object-Store liefe auf denselben VMs mit demselben Fenster.
+
 ### Grafana Alloy (Log-Collector)
 
-Alloy sammelt Logs aus allen Infrastruktur-Komponenten und leitet sie an Loki weiter. Es gibt drei Deployment-Arten:
+Alloy sammelt Logs aus allen Infrastruktur-Komponenten und leitet sie an Loki weiter. Der Regelweg ist ein systemd-Dienst je Host aus der Ansible-Rolle, der das Journal und ausgewählte Dateien liest:
 
-- **Nomad System-Job** (`system/alloy.nomad`) auf jedem Client-Node -- Container-Logs via Docker-Socket plus Syslog-Receiver auf Port 1514 für NAS und Router.
-- **Ansible-Rolle `alloy`** (systemd) auf Server-/Client-Nodes, Proxmox und Infra-VMs -- systemd-Journal plus optionale Datei-Targets.
-- **Standalone-Config (traefik-ha)** auf den Traefik-VMs -- Docker-Compose-Logs mit Source-Label `docker-compose`.
+- **Ansible-Rolle `alloy`** (systemd) auf Server- und Client-Nodes, Proxmox, CheckMK, PBS und Datacenter Manager. Auf den Clients kommen die Container-Zeilen über den journald-Log-Treiber mit dazu, auf den Servern das Vault-Audit-Log.
+- **Compose-Alloy** auf den Traefik-VMs -- Logs des dortigen Compose-Stacks plus Syslog-Empfang am Keepalived-VIP.
+- **Nomad-System-Job** (`system/alloy.nomad`) nur noch als Rest-Sammler für die Container des privilegierten `linstor-csi`-Jobs und den Syslog-Port, an den das NAS HomeServer sendet.
 
-Das Architektur-Diagramm der drei Deployment-Arten, die Playbook-Tabelle, das Label-Schema und Log-Query-Beispiele sind in [Grafana Alloy](./alloy.md) gepflegt. Die SSOT für die Zuordnung Host -> Methode -> Source-Label ist die [Log-Quellen-Übersicht](./referenz.md#log-quellen) in der Referenz.
+Das Architektur-Diagramm der Pipeline, die Playbook-Tabelle, das Label-Schema und Log-Query-Beispiele sind in [Grafana Alloy](./alloy.md) gepflegt. Die SSOT für die Zuordnung Quelle -> Methode -> Labels ist die [Log-Quellen-Übersicht](./referenz.md#log-quellen) in der Referenz.
+
+### Selbstüberwachung
+
+Zwei periodische Jobs prüfen die Log-Pipeline ausserhalb von Grafana und melden über Uptime Kuma: `loki-deadman` alle fünf Minuten den Ingest jeder erwarteten Quelle, `loki-rule-lint` täglich jeden Loki-Selektor der Alert-Regeln gegen die Serien der letzten sieben Tage. Details in [Grafana Alloy](./alloy.md#selbstuberwachung-der-log-pipeline).
+
+Ein eigener Loki-Ruler wurde bewusst nicht eingeführt. Die Schwellwert-Logik bleibt vollständig in Grafana, damit es genau eine Auswertestelle für Metrik- und Log-Alarme gibt.
 
 Die Log-Level je Komponente listet die [Monitoring Referenz](./referenz.md#log-levels). Grafana-Admin, Silencing, Backup-Monitoring und die Wartung (Grafana Dashboards, InfluxDB Downsampling-Tasks) sind im [Monitoring Betrieb](./betrieb.md) beschrieben.
 
