@@ -52,6 +52,7 @@ Die DRBD-Überwachung ist seit 2026-07-05 zustandsbasiert: Alarmiert wird auf di
 
 ### Konventionen der Loki-Regeln
 
+- **`nomad_job=""`** in jedem Selektor, der das Host-Journal meint. Seit dem journald-Log-Treiber tragen Container-Zeilen dieselbe Herkunft `source="journal"` wie das Host-Journal und stellen die grosse Mehrheit der Zeilen. Ohne diesen Matcher durchsucht jede Journal-Regel die gesamte Container-Ausgabe des Clusters. Der Label-Matcher trennt sauber, weil Container-Zeilen `nomad_job` tragen und Host-Zeilen nicht. Regeln, die ohnehin auf ein `unit` filtern, brauchen ihn nicht: Container-Zeilen haben gar kein `unit`-Label. Entbehrlich wird er erst, wenn das erweiterte Label-Schema die Container-Zeilen auf eine eigene Herkunft umstellt.
 - **`execErrState: OK`** auf allen Loki-Regeln. Ein Query-Fehler ist kein Fachalarm: Beim Loki-Neustart am 06.09.2026 erzeugten genau die drei Regeln, die damals noch auf `Alerting` standen, drei falsche kritische Incidents, während keine der übrigen feuerte.
 - **`node` statt `host`** als Kollektor-Label in Selektor, Aggregation und Annotation. Das Journal trägt seit dem Wegfall der Doppelerfassung nur noch `node`, `host` bleibt dem Syslog-Ursprung vorbehalten.
 - **Annotation `lint: skip`** kennzeichnet Regeln, deren Selektor legitim keine Serie liefert, weil er auf eine Oneshot-Unit zielt. Der [Rule-Lint](./alloy.md#selbstuberwachung-der-log-pipeline) überspringt sie dann, statt sie als stumm zu melden.
@@ -82,7 +83,7 @@ Diese Tabelle ist die SSOT für die Zuordnung Quelle -> Methode -> Labels. Deplo
 | Komponente | Log-Level | Konfigurationsort |
 | :--- | :--- | :--- |
 | Loki | `warn` | `monitoring/loki.nomad` |
-| Grafana | `info` | `monitoring/grafana.nomad` |
+| Grafana | `info`, Logger `tsdb.loki` auf `critical` gefiltert | `monitoring/grafana.nomad` |
 | Nomad | `INFO` | `ansible/roles/nomad/defaults/main.yml` |
 | Consul | `WARN` | `ansible/roles/consul/defaults/main.yml` |
 | Vault | `INFO` | `ansible/roles/vault/defaults/main.yml` |
