@@ -1,6 +1,6 @@
 ---
 title: Claude Rotate
-description: Multi-Konto-Proxy für Claude Code, der Anfragen automatisch auf das Konto mit freier Limite verteilt und das Fable-Wochenfenster berücksichtigt
+description: Multi-Konto-Proxy für Claude Code als Opt-in-Pfad für Agenten-Flotten und Headless-Läufe, seit September 2026 als Standardweg abgelöst vom lokalen Live-Wechsler claude-swap
 tags:
   - service
   - proxy
@@ -10,7 +10,7 @@ tags:
 
 # Claude Rotate
 
-Claude Rotate ist ein kleiner HTTP-Proxy vor der Anthropic-API. Claude Code auf dem Mac oder in Container-Jobs zeigt per Umgebungsvariable auf den Proxy statt direkt auf `api.anthropic.com`, der Proxy tauscht den Anmelde-Header gegen das Token des gerade aktiven Kontos und reicht alles andere unverändert durch. Aus den Antwort-Headern liest er die Auslastung der Limiten und wechselt das Konto, bevor eine Session in die Sperre läuft. Grundlage ist der Open-Source-Proxy [doxaras/claude-rotate](https://github.com/doxaras/claude-rotate), betrieben als Fork [derever-labs/claude-rotate](https://github.com/derever-labs/claude-rotate) mit Erweiterungen für den Cluster-Betrieb und für das separate Fable-Wochenfenster. Er ergänzt [Claude Usage](../claude-usage/index.md): das Dashboard zeigt die Limiten, der Proxy handelt danach.
+Claude Rotate ist ein kleiner HTTP-Proxy vor der Anthropic-API. Claude Code auf dem Mac oder in Container-Jobs zeigt per Umgebungsvariable auf den Proxy statt direkt auf `api.anthropic.com`, der Proxy tauscht den Anmelde-Header gegen das Token des gerade aktiven Kontos und reicht alles andere unverändert durch. Aus den Antwort-Headern liest er die Auslastung der Limiten und wechselt das Konto, bevor eine Session in die Sperre läuft. Grundlage ist der Open-Source-Proxy [doxaras/claude-rotate](https://github.com/doxaras/claude-rotate), betrieben als Fork [derever-labs/claude-rotate](https://github.com/derever-labs/claude-rotate) mit Erweiterungen für den Cluster-Betrieb und für das separate Fable-Wochenfenster. Er ergänzt [Claude Usage](../claude-usage/index.md): das Dashboard zeigt die Limiten, der Proxy handelt danach. Der Standardweg für den Kontowechsel ist er seit dem 6. September 2026 nicht mehr, siehe [Betriebsweise](#betriebsweise).
 
 ## Übersicht
 
@@ -22,11 +22,27 @@ Claude Rotate ist ein kleiner HTTP-Proxy vor der Anthropic-API. Claude Code auf 
 | Auth | Kein Authentik (Claude Code kann keinem Login-Redirect folgen). Device-Key pro Gerät im Anmelde-Header, unbekannter Key ergibt 401, dazu ClientIP-Allowlist im Router `intern-noauth@file` |
 | Secrets | Vault `kv/claude-rotate` (Device-Keys als `devices_json`) und lesend `kv/claude-usage/creds/*` (Konto-Tokens, gepflegt vom Poller in Claude Usage) |
 
+## Betriebsweise
+
+Standardweg für den Kontowechsel ist seit dem 6. September 2026 nicht mehr der Proxy, sondern der lokale Live-Wechsler `claude-swap` (Kommando `cswap`, MIT-Lizenz, Projekt `realiti4/claude-swap`) auf Samuels Mac. Er tauscht das angemeldete Konto direkt im macOS-Keychain. Claude Code liest den Credential-Store pro Anfrage neu, deshalb wechselt auch eine bereits laufende Session samt ihrer Subagenten das Konto, ohne Neustart. Erfasst sind dieselben drei Konten wie im Proxy: `hslu-dc`, `hslu-privat` und `privat`.
+
+Der Wechsel läuft automatisch. Ein LaunchAgent `ch.ackermannprivat.claude-swap-auto` prüft jede Minute, ob das aktive Konto die Schwelle von 90 Prozent erreicht, bewertet dabei das Fable-Wochenfenster mit und wählt das nächste Konto nach der Strategie consume-first. Protokoll unter `~/.local/var/log/claude-swap-auto.log`.
+
+### Warum der Proxy nicht mehr Standard ist
+
+Anthropic erlaubt die OAuth-Tokens eines Abos ausdrücklich nur im unveränderten Claude Code und in nativen Anthropic-Anwendungen. Ein Proxy, der diese Tokens hält und Konten tauscht, fällt nicht darunter und umgeht eine serverseitige Sperre. Der Wechsel per Anmeldung mit eigenen Konten bleibt dagegen regelkonform, weil er nichts umgeht: jede Anfrage läuft als das Konto, an dem Claude Code angemeldet ist. Für beide Wege gilt unverändert, dass nur eigene, bezahlte Konten genutzt werden und nie als geteilter Dienst.
+
+Dazu kommen die dokumentierten Funktionskosten einer fremden Basis-URL, die den lokalen Wechsel auch technisch überlegen machen: kein Remote Control, keine Session-URL, der Prompt-Cache läuft nach fünf statt nach sechzig Minuten ab, und das grosse Kontextfenster braucht ein undokumentiertes Flag.
+
+### Der Proxy als Opt-in
+
+Der Proxy läuft weiter, aber als bewusster Opt-in für Agenten-Flotten und Headless-Läufe, bei denen niemand vor der Session sitzt und die Funktionskosten der fremden Basis-URL nicht ins Gewicht fallen. Aktiviert wird er pro Shell mit `rotate-on`, der Standard ist aus (Details unter [Nutzung auf dem Mac](#nutzung-auf-dem-mac)).
+
 ## Rolle im Stack
 
-Drei Konten (zwei Max, ein Pro) teilen sich die Arbeit von Claude Code. Ohne Proxy heisst ein volles Limit: Session abbrechen, umloggen, weiterarbeiten, und das Fable-Wochenfenster eines Kontos ist regelmässig leer, während das andere Konto Platz hätte. Der Proxy macht daraus eine Betriebsentscheidung, die niemand von Hand treffen muss. Er ist bewusst kein Weg um Limiten herum: jedes Konto bleibt einzeln durch Anthropic begrenzt, der Proxy verteilt nur auf Konten, die Samuel selbst bezahlt.
+Drei Konten teilen sich die Arbeit von Claude Code. Ohne Proxy heisst ein volles Limit: Session abbrechen, umloggen, weiterarbeiten, und das Fable-Wochenfenster eines Kontos ist regelmässig leer, während das andere Konto Platz hätte. Der Proxy macht daraus eine Betriebsentscheidung, die niemand von Hand treffen muss. Er umgeht dabei keine Nutzungslimite: jedes Konto bleibt einzeln durch Anthropic begrenzt, der Proxy verteilt nur auf Konten, die Samuel selbst bezahlt.
 
-Der Proxy ist ein Zusatz, kein Pflichtpfad. Auf dem Mac ist er in jeder neuen Shell aktiv, sofern er bereit ist, und pro Shell abschaltbar (`rotate-off`). Ein Ausfall mitten in einer Session heisst `rotate-off` und Resume, der Prompt-Cache liegt bei Anthropic pro Konto und überlebt das. Der Poller von Claude Usage läuft immer direkt gegen Anthropic, weil die Claude-CLI dort ihr eigenes Token erneuern muss.
+Ein Ausfall mitten in einer Session heisst `rotate-off` und Resume, der Prompt-Cache liegt bei Anthropic pro Konto und überlebt das. Der Poller von Claude Usage läuft immer direkt gegen Anthropic, weil die Claude-CLI dort ihr eigenes Token erneuern muss.
 
 ## Datenfluss
 
@@ -100,7 +116,7 @@ Der Proxy kennt zwei Modellklassen. Anfragen an Fable oder Mythos sind *scoped*:
 
 Ein 429 wird nach den Headern eingeordnet: meldet nur das Fable-Fenster erschöpft, verliert das Konto nur die scoped-Klasse. Meldet das 5-Stunden- oder Wochenfenster erschöpft, verliert es beide. Ein Burst-429 (Minutenlimit) löst keinen Wechsel aus, die Anfrage wartet die vom Server genannte Zeit.
 
-Die drei Konten: `hslu-dc` und `hslu-privat` (beide Max) mit Priorität 1, `privat` (Pro, ohne Fable) ist erfasst, aber deaktiviert. Die Konfiguration steht sichtbar im Job-File, nur die Device-Keys kommen aus Vault.
+Alle drei Konten `hslu-dc`, `hslu-privat` und `privat` stehen mit Priorität 1 in der Wahl, seit auch das private Abo wieder ein Max-Abo ist. Die früheren Sonderfälle für dieses Konto (deaktiviert, Fable-Modelle gesperrt) sind damit entfallen. Die Konfiguration steht sichtbar im Job-File, nur die Device-Keys kommen aus Vault.
 
 ## Tokens und Auslastung
 
@@ -114,24 +130,28 @@ Fällt der Poller in Claude Usage aus, laufen die Access-Tokens in Vault innerha
 
 ## Nutzung auf dem Mac
 
-Die Shell-Funktionen `rotate-on`, `rotate-off` und `rotate-status` liegen im Claude-Config-Repo unter `scripts/claude-rotate.zsh` und werden aus der `.zshrc` geladen. Jede neue interaktive Shell schaltet den Proxy ein, wenn er bereit antwortet, sonst meldet sie den Bypass und Claude Code läuft direkt. `rotate-off` ist der Ausstieg pro Shell, `CLAUDE_ROTATE_DEFAULT=off` schaltet den Standard ab. Der Device-Key liegt in einer Datei mit Modus 600 im Claude-Verzeichnis, bewusst nicht in der `settings.json`.
+Die Shell-Funktionen `rotate-on`, `rotate-off` und `rotate-status` liegen im Claude-Config-Repo unter `scripts/claude-rotate.zsh` und werden aus der `.zshrc` geladen. Der Standard ist aus: eine neue Shell lässt Claude Code direkt gegen Anthropic laufen, erst `rotate-on` schaltet den Proxy für diese eine Shell ein und setzt dabei auch das First-Party-Flag. `rotate-off` nimmt das zurück. Der Device-Key liegt in einer Datei mit Modus 600 im Claude-Verzeichnis, bewusst nicht in der `settings.json`.
 
 ::: warning Kontextfenster: First-Party-Flag ist Pflicht
 Mit einer fremden Base-URL behandelt Claude Code den Proxy als Cloud-Gateway, kennt seine Modelltabelle nicht mehr und kappt Modelle ohne `[1m]`-Suffix auf 200k Kontext. Beim Resume kommt genau die nackte Modell-ID zurück, die Session meldet dann "Prompt is too long". Die Shell-Funktionen setzen deshalb zusätzlich `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1`, damit die Modelltabelle wieder gilt (gemessen: 730k statt 180k effektives Fenster). Remote Control bleibt laut CLI trotzdem aus.
 :::
 
 ::: warning Session-Verknüpfung mit claude.ai entfällt
-Mit einer fremden Basis-URL baut Claude Code keine Verbindung zu claude.ai auf: keine Session-URL, kein Weiterarbeiten am Handy, kein Remote Control. Der Proxy ist deshalb für Agenten-Flotten, Container-Jobs und unbeaufsichtigte Läufe gedacht. Interaktive Sessions, die eine Session-URL brauchen, laufen ohne `rotate-on`. Die Desktop-App ist nicht betroffen.
-:::
-
-::: warning Nutzungsbedingungen
-Das Verteilen auf mehrere eigene Konten bewegt sich in einer Grauzone der Consumer-Bedingungen von Anthropic, das Projekt selbst weist darauf hin. Betrieb nur mit eigenen, bezahlten Konten und nie als geteilter Dienst.
+Mit einer fremden Basis-URL baut Claude Code keine Verbindung zu claude.ai auf: keine Session-URL, kein Weiterarbeiten am Handy, kein Remote Control. Die Desktop-App ist nicht betroffen.
 :::
 
 ## Betrieb
 
 Zwei Endpunkte ohne Anmeldung: `/rotate/health` antwortet immer 200 (Prozess lebt) und ist der Consul-Check, damit Kontokapazität nie das Routing oder das Deploy-Gate beeinflusst. `/rotate/ready` antwortet 200 nur mit mindestens einem nutzbaren Konto, sonst 503, dazu das Alter der letzten Vault- und usage.json-Daten; darauf prüft der Kuma-Monitor `claude-rotate Ready`, und daraus speist sich der Proxy-Block im Usage-Dashboard. `/rotate/status` (mit Device-Key im Header) zeigt beide aktiven Konten, die Fenster pro Konto, die letzten Wechsel, die letzten Requests und die Sessions der letzten 24 Stunden mit Gerät, Konten und Modellen. Jeder Request landet zusätzlich als Audit-Zeile im Nomad-Log der Task.
 
+Die Session-Kennung aus `metadata.user_id` wird streng geprüft, bevor sie in die Statistik geht: erlaubt sind nur nichtleere, UTF-8-saubere Zeichenketten bis 128 Zeichen, in beiden Schreibweisen des Feldnamens. Unbrauchbare Werte verwirft der Proxy und beantwortet die Anfrage trotzdem, denn sonst konnte `/rotate/status` mit Fehler 500 ausfallen.
+
 Nach dem Tiefenreview vom 6. September 2026 ist der Proxy bewusst schmal: keine Strategien, keine Cooldowns, kein Panel, keine OpenAI-Route, kein Zustand auf Platte. Die Kontowahl ist eine einzige Regel vor jedem Request, alles andere sind Messwerte. Der Proxy liest seine Konfiguration nur beim Start und nennt unbekannte Schlüssel als Warnung. Änderungen am Job-File deployen über die CD-Pipeline. Neue Geräte bekommen einen Eintrag in `devices_json` in Vault und den Key als Datei auf dem Gerät.
 
 Die Traefik-Antwortzeit ist für diesen Dienst angehoben: der HTTPS-Entrypoint erlaubt 30 Minuten pro Antwort, weil Claude Code minutenlang streamt und die frühere Grenze von 60 Sekunden lange Modellantworten abgeschnitten hätte (siehe [Traefik](../../edge/traefik/index.md)).
+
+## Verwandte Seiten
+
+- [Claude Usage](../claude-usage/index.md) -- Dashboard der Konto-Limiten und Quelle der Access-Tokens in Vault
+- [Traefik](../../edge/traefik/index.md) -- Router, Allowlist-Chain und die angehobene Antwortzeit
+- [Monitoring-Coverage](../../monitoring/coverage/index.md) -- Einordnung der Überwachung dieses Dienstes
