@@ -30,13 +30,17 @@ CheckMK überwacht alle relevanten Infrastruktur-Hosts über den CheckMK Agent:
 - **Infrastruktur-VMs:** lxc-dns-01, lxc-dns-02, vm-traefik-01, vm-traefik-02, PBS, CheckMK selbst
 - **NAS (Synology DS):** Zwei SNMP-Hosts -- `synology-nas` (Homelab DS1825+ via LAN) und `nana-nas` (Dottikon DS1517+ via Tailscale). Disk-Status, Volume-Auslastung, RAID-Zustand, Lüfter/Temperaturen, Update-Status
 - **Home Assistant:** Kein CheckMK-Agent (HAOS ist immutable, kein Agent installierbar). Metriken via Telegraf/Alloy + Proxmox-Special-Agent von pve02; die Gast-Memory-Innensicht liefert ein eigener [HAOS-Memory-Custom-Check](#haos-memory-check-ssh-forced-command).
-- **Nomad-Container:** Alle laufenden Allocs via Docker Piggyback-Mechanismus auf den Client-Nodes
+- **Nomad-Container:** nur auf Node-Ebene (Container-Anzahl, Image-Belegung), keine eigenen Container-Hosts
 - **Netzwerk:** Erreichbarkeit kritischer Endpunkte
 
 Auf bereits registrierten Hosts erkennt CheckMK neue Services und Checks per Auto-Discovery automatisch.
 
-::: info Nomad-Container via Docker Piggyback
-Der Docker-Plugin auf den Nomad Client-Nodes übergibt Container-Checks als Piggyback-Daten an CheckMK. Jeder laufende Nomad-Alloc erscheint dadurch als eigener Host in CheckMK. Dies erklärt die hohe Host-Anzahl.
+::: info Keine Container-Hosts mehr
+Das Plugin `mk_docker` auf den Client-Nodes schreibt weiterhin Piggyback-Daten je Container, aber seit der Bereinigung der DCD-Verbindung am 01.05.2026 gibt es keinen Konsumenten dafür. Aus dem Plugin stammen nur noch die Docker-Services auf Node-Ebene. Die Site führt 24 Hosts, nicht einen je Allocation.
+:::
+
+::: warning Sektion docker_container_agent übersprungen
+`mk_docker` sammelt diese Sektion, indem es je Container einen Docker-Exec auf `check_mk_agent` startet. Kein Homelab-Image trägt diesen Agenten, also scheitert jeder Aufruf, und der Docker-Daemon schrieb pro Versuch drei Fehlerzeilen ins Journal -- auf vm-nomad-client-06 rund 220'000 Zeilen pro Tag und damit knapp die Hälfte des gesamten Journal-Volumens. `/etc/check_mk/docker.cfg` setzt deshalb `skip_sections: docker_container_agent`, verwaltet über `ansible/playbooks/checkmk-docker-plugin.yml`. Die Datensammlung verliert dadurch nichts: die Sektionen für CPU, Memory und Diskstat laufen ohnehin nur in dem Zweig, der greift, wenn die Agent-Sektion kein Resultat lieferte.
 :::
 
 ## Cluster-Inventar

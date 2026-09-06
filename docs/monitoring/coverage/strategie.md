@@ -30,7 +30,7 @@ CheckMK Homelab feuert seine Alerts über den Single-Notifier "Keep Hub Notifier
 Beide Cluster identisch aufgesetzt, aber unterschiedlich befüllt:
 
 - **Telegraf -> InfluxDB-Ops -> Grafana -> Webhook -> Keep**: app-Metriken, prom-scrapes, host-disk, host-cpu, ssh-counts. DCLab: SNMP-Block auskommentiert (alle SNMP-Targets nur via CheckMK). Homelab: Synology-Hardware seit dem Cutover 2026-06-05 via CheckMK (zentraler SNMP-Block stillgelegt)
-- **Alloy -> Loki -> Grafana LogQL -> Webhook -> Keep**: Log-Pattern-Alerts. Beide Cluster aktiv. DCLab hat einen Self-Detection-Alert (`loki-ingester-down`), Homelab keinen
+- **Alloy -> Loki -> Grafana LogQL -> Webhook -> Keep**: Log-Pattern-Alerts. Beide Cluster aktiv. Die Self-Detection läuft seit 2026-09-06 in beiden Clustern über den periodischen Job `loki-deadman` mit Push an Uptime Kuma, bewusst ausserhalb von Grafana. Der DCLab hat zusätzlich den Grafana-Alert `loki-ingester-down`
 - **Uptime-Kuma -> Webhook -> Keep**: Push-Heartbeats (cron-jobs), TCP/HTTP-Probes. Single-Notifier-Cleanup live in beiden Clustern
 - **Direct -> Webhook -> Keep**: synthetische Cron-Probes, Watchdog-Skripte
 - **CheckMK -> Webhook -> Keep**: Homelab live seit 2026-05-01 (Single-Notifier "Keep Hub Notifier"). DCLab: kein Webhook-Notifier konfiguriert -- hier ist die verbleibende Lücke (Inventar-Details auf der [CheckMK](../checkmk/index.md#cluster-inventar)-Seite)

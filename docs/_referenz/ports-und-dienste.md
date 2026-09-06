@@ -121,7 +121,7 @@ Zum Betriebskonzept statischer vs. dynamischer Ports und den Kollisionsregeln si
 
 | Port | Protokoll | Dienst | Nomad Job | Bemerkung |
 | :--- | :--- | :--- | :--- | :--- |
-| 1514 | TCP | Syslog | `alloy` | Log-Collector (bridge mode) |
+| 1514 | TCP + UDP | Syslog | `alloy` (Compose auf den Traefik-VMs, dazu der Nomad-System-Job) | RFC3164, regulärer Empfänger ist der Keepalived-VIP |
 | 3001 | TCP | Uptime Kuma | `uptime-kuma` | Monitoring, hinter Traefik |
 | 3100 | TCP | Loki | `loki` | Log-Aggregation |
 | 8086 | TCP | InfluxDB | `influxdb` | Metriken-Datenbank |

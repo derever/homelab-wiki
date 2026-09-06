@@ -67,6 +67,8 @@ Watchtower wurde am 2026-04-14 vollständig zurückgebaut. Renovate erstellt Pul
 | `iperf3-to-influxdb` | batch | Alle 30 Min | WAN-Bandbreite (Up + Down) zu `speedtest.init7.net` messen, Ergebnis nach InfluxDB schreiben | `vm-nomad-client-0[456]` (regexp), Affinität client-04 | raw_exec, Vault Secrets, Measurement `iperf3` (Fields: `upload_bps`, `download_bps`) |
 | `storage-benchmark-to-influxdb` | batch | Stündlich | Storage-Performance (seq Write/Read + random IOPS) gegen NFS-Pfade messen | `vm-nomad-client-0[456]` (regexp) | raw_exec, Vault Secrets, Measurement `raid_benchmark` |
 | `dns-performance` | batch | Konfigurierbar | DNS-Antwortzeiten messen | `vm-nomad-client-0[456]` (regexp) | raw_exec |
+| `loki-deadman` | batch | Alle 5 Min | Globalen Log-Ingest und jede erwartete Quelle prüfen, Ergebnis an Uptime Kuma pushen | keiner | Docker, Vault Secrets, `prohibit_overlap`, bis zu drei Durchgänge vor einem Down-Push |
+| `loki-rule-lint` | batch | Täglich 06:20 | Jeden Loki-Selektor der Grafana-Alert-Regeln gegen sieben Tage Serien prüfen und die Quellenliste abgleichen | keiner | Docker, Vault Secrets, Ausnahme über die Regel-Annotation `lint: skip` |
 
 ::: info iperf3-to-influxdb: Nur ein Node gleichzeitig
 Der Job hat `prohibit_overlap = true` -- falls ein Lauf länger als 30 Minuten dauert (z.B. Netzwerkproblem), wird der nächste Lauf übersprungen. So vermeidet der Job parallele Messungen über denselben WAN-Link.

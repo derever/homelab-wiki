@@ -22,7 +22,7 @@ Diese Seite ist die kanonische Übersicht aller Nomad Jobs. Job-Definitionen lie
 | identity/ | Authentik |
 | infrastructure/ | SMTP Relay, Nebula Sync, Zot Registry, GitHub Runner, ntfy |
 | media/ | Jellyfin, Sonarr, Radarr, Prowlarr, SABnzbd, Jellyseerr, JellyStat, Stash, Stash-Secure, Stash-Jellyfin-Proxy, Suggestarr, AudioBookShelf, LazyLibrarian, YouTube-DL, Special-YouTube-DL, Special-YT-DLP, Video-Grabber |
-| monitoring/ | Grafana, InfluxDB, Loki, Uptime Kuma, Keep, Keep Mobile, Keep DB Retention, Keep Escalate Stale, Keep Heartbeat Watch, Metrics Deadman, Stale-Crit-Melder, iperf3-to-InfluxDB |
+| monitoring/ | Grafana, InfluxDB, Loki, Uptime Kuma, Keep, Keep Mobile, Keep DB Retention, Keep Escalate Stale, Keep Heartbeat Watch, Metrics Deadman, Loki Deadman, Loki Rule-Lint, Stale-Crit-Melder, iperf3-to-InfluxDB |
 | services/ | VitePress Wiki, Paperless (simple), Vaultwarden, Ollama, Open-WebUI, Portale (welcome/intra), Tandoor, ChangeDetection, Browserless, Profilarr, Obsidian-LiveSync, Mosquitto, Zigbee2MQTT, Gitea, Metabase, solidtime, n8n, MeshCommander, PHDler Telegram Bot, Telegram Relay, PocketBase, Directus Gravel, Immo-Monitor, Immoscraper, Immoscraper Weekly, Immoscraper Frühsignal, Karakeep, Karakeep Ingest, Claude Usage |
 | system/ | Alloy (Log-Collector), Linstor CSI |
 | tools/ | Todo-Ingest, Mexiko-Reiseübersicht |

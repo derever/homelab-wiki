@@ -90,6 +90,30 @@ Damit Alerts sinnvoll korrelieren, braucht jeder Alert ein kanonisches `service`
 
 Die Enrichment-Schicht läuft beweisbar **vor** dem Workflow-Trigger und der Correlation (Ingestion-Reihenfolge: Extraction -> Mapping -> Workflows -> Correlation). Das `service`-Feld füllt später `incident.services` und ist damit die strukturelle Voraussetzung für Per-Dienst-Acknowledge.
 
+## signal und Pipeline-Störungen
+
+Dieselbe Extraction-Schicht setzt zwei weitere Felder, beide seit dem 06.09.2026 live.
+
+**`signal`** klassifiziert jeden Alert nach seiner Herkunftsart: `log` für Grafana-Alerts mit dem Label `source: loki`, `metric` als Vorgabe für alle übrigen Grafana-Alerts, `probe` für Uptime Kuma und CheckMK. Darauf setzt das Preset **Logs** mit dem Filter `signal == "log"` auf. Alerts aus der Zeit vor der Einführung tragen das Feld nicht und fallen aus dem Preset heraus, statt es zu brechen.
+
+**`pipeline_state`** trennt Störungen der Beobachtungskette von Fachalarmen. Meldet Grafana einen Query-Fehler oder einen NoData-Zustand, setzt die Regel `service = observability-pipeline`, `severity = warning` und den passenden `pipeline_state`. Die bestehende Service-Correlation bündelt damit alle Pipeline-Störungen eines Aussetzers in einen einzigen Incident. Eine eigene Inhibit- oder Severity-Rule braucht es dafür nicht.
+
+Die NoData-Herabstufung greift nur bei Regeln **ohne** das Grafana-Label `detector`. Down-Detektoren wie `nomad-node-down` oder `linstor-node-offline` sagen mit ihrem NoData-Zustand gerade das aus, was sie melden sollen -- sie bleiben kritisch. Schwellwert-Regeln, die `noDataState: Alerting` nur als Fail-Safe tragen, bekommen das Label bewusst nicht: dort heisst NoData tatsächlich, dass der Collector nichts liefert.
+
+::: warning Query-Fehler werden immer herabgestuft, auch an Down-Detektoren
+Die Error-Bedingung kennt die Detektor-Ausnahme nicht. Fällt Loki aus, kommt ein davon abhängiger Down-Detektor als Pipeline-Störung mit `warning` an statt als kritischer Ausfall. Das ist so entschieden, weil ein Query-Fehler nie ein Fachalarm ist. Das kompensierende Signal liefert der Job `loki-deadman`, der ausserhalb von Grafana prüft und über Uptime Kuma meldet (siehe [Grafana Alloy](../alloy.md#selbstuberwachung-der-log-pipeline)).
+:::
+
+::: warning Reihenfolge beim Ausrollen
+Das `detector`-Label muss in Grafana live sein, bevor die Keep-Regeln scharf werden. Sonst ginge ein echter Node-Ausfall im Fenster dazwischen als blosse Pipeline-Warnung durch.
+:::
+
+## Stabiler Fingerprint für Grafana-Alerts
+
+Eine Extraction-Rule mit Priorität 300 baut den Fingerprint von Grafana-Alerts aus einer festen Label-Kette statt aus dem vollständigen Label-Satz: Alertname, Ordner, Severity, `node`, `service_name` und `check_id`.
+
+**Warum:** Ein firing-Alert trägt oft Zusatzlabels, die der zugehörige resolved-Alert nicht mehr hat. Ohne die Regel bekommen beide verschiedene Fingerprints, der resolved-Alert findet seinen Vorgänger nicht, und der Incident bleibt trotz `resolveOn: all_resolved` dauerhaft offen. Mit der Regel landen beide im selben Bucket und der Incident schliesst sich selbst. Die Regel ist der wortgleiche Port aus dem DCLab.
+
 ## Correlation -- zwei Rules
 
 Statt einer einzigen Catch-all-Rule (die früher 545 Incidents in einen Eimer warf) korrelieren zwei disjunkte Rules (`nomad-jobs/monitoring/keep-bootstrap/setup-topology.py`, beide `resolveOn: all_resolved`):

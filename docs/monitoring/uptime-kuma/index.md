@@ -39,6 +39,7 @@ Beispiele aus der aktuellen Belegung (die gepflegte Gesamtliste steht in [Monito
 - **PostgreSQL Backup** -- Tägliches pg_dumpall auf NFS, siehe [Monitoring Betrieb](../betrieb.md#backup-monitoring)
 - **Karakeep Backup** -- Tägliches App-Level-Backup (SQLite + Assets) in der Gruppe *Storage & Backup*, siehe [Karakeep Referenz](../../dienste/karakeep/referenz.md#backup)
 - **InfluxDB Downsampling-Tasks** -- 6 Flux-Tasks mit Heartbeat pro Task, siehe [Monitoring Betrieb](../betrieb.md#influxdb-downsampling-tasks)
+- **Loki-Deadman (Log-Ingest)** und **Loki Rule-Lint** -- Selbstüberwachung der Log-Pipeline, bewusst über Kuma statt über Grafana, siehe [Grafana Alloy](../alloy.md#selbstuberwachung-der-log-pipeline)
 
 ## Kern-Infra-Mindestabdeckung
 
