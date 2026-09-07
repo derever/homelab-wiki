@@ -19,8 +19,8 @@ Claude Usage zeigt auf einer Seite, wie weit die Limiten der drei Claude-Konten 
 | URL | [claude.ackermannprivat.ch](https://claude.ackermannprivat.ch) (nur intern und VPN) |
 | Deployment | Nomad Job `services/claude-usage.nomad`, Images aus [github.com/derever-labs/claude-usage](https://github.com/derever-labs/claude-usage) |
 | Storage | Keins -- `usage.json` liegt ephemer im Alloc-Verzeichnis, die Konto-Credentials persistent in Vault |
-| Auth | Seite: `intern-auth@file` (Authentik, Gruppe `admin`) plus ClientIP-Allowlist; `/usage.json`: `intern-api@file` ohne Authentik |
-| Secrets | Vault `kv/claude-usage` (ntfy-Token) und `kv/claude-usage/creds/*` (OAuth-Credentials, der Poller schreibt Rotationen zurück) |
+| Auth | Seite: `intern-auth@file` (Authentik, Gruppe `admin`) plus ClientIP-Allowlist; `/usage.json`, `/swap.json` und `POST /api/swap`: `intern-api@file` ohne Authentik, der Empfänger prüft ein Bearer-Token |
+| Secrets | Vault `kv/claude-usage` (ntfy-Token, Swap-Token) und `kv/claude-usage/creds/*` (OAuth-Credentials, der Poller schreibt Rotationen zurück) |
 
 ## Rolle im Stack
 
@@ -61,6 +61,11 @@ ntfy: ntfy {
 
 browser: Browser { class: node }
 
+mac: "Mac: Wechsler claude-swap" {
+  class: node
+  tooltip: "Tauscht die Claude-Code-Credentials im Keychain und meldet bei jedem Wechsel und alle 5 Minuten das aktive Konto"
+}
+
 traefik: Traefik {
   class: container
 
@@ -68,9 +73,9 @@ traefik: Traefik {
     class: node
     tooltip: "Host-Regel plus ClientIP-Allowlist, Chain intern-auth -- Authentik mit Gruppe admin"
   }
-  rdata: "Daten-Router /usage.json" {
+  rdata: "Daten-Router /usage.json, /swap.json, /api/swap" {
     class: node
-    tooltip: "Pfad-Router mit hoher expliziter Priorität, Chain intern-api -- bewusst ohne Authentik"
+    tooltip: "Pfad-Router mit hoher expliziter Priorität, Chain intern-api -- bewusst ohne Authentik; /api/swap prüft der Empfänger per Bearer-Token"
   }
 }
 
@@ -87,6 +92,11 @@ app: "claude-usage (Nomad-Group)" {
     class: node
     tooltip: "Geteiltes Alloc-Verzeichnis der Group -- ephemer, der nächste Poller-Zyklus füllt es nach"
   }
+  swap: "/alloc/data/swap.json" {
+    shape: cylinder
+    class: node
+    tooltip: "Letzte Meldung des Mac-Wechslers -- ephemer, die nächste Meldung (spätestens der 5-Minuten-Heartbeat) füllt sie nach"
+  }
 }
 
 vault -> app.poller: "1 Credentials beim Start" { class: push }
@@ -96,7 +106,9 @@ app.poller -> vault: "4 rotierte Credentials zurück" { class: push }
 app.poller -> ntfy: "5 Limit wieder frei" { class: push }
 browser -> traefik.rseite: "6 Seite anfordern" { class: seite }
 traefik.rseite -> app.html: "7 HTML und JS ausliefern" { class: seite }
-browser -> traefik.rdata: "8 usage.json lesen" { class: seite }
+browser -> traefik.rdata: "8 usage.json und swap.json lesen" { class: seite }
+mac -> traefik.rdata: "9 aktives Konto melden" { class: push }
+app.poller -> app.swap: "10 swap.json schreiben" { class: push }
 ```
 
 1. Beim Start stellt der Poller die Credentials-Dateien der drei Konten aus Vault im tmpfs her (siehe [Credentials in Vault](#credentials-in-vault)).
@@ -107,8 +119,10 @@ browser -> traefik.rdata: "8 usage.json lesen" { class: seite }
 6. Der Browser holt die Seite über den Seiten-Router, der Authentik und die IP-Allowlist vorschaltet.
 7. Ausgeliefert wird statisches HTML mit JavaScript; die Aufbereitung der Zahlen passiert im Browser.
 8. Die Daten selbst holt das JavaScript über den zweiten Router ohne Authentik (siehe [Zwei Router auf einem Service](#zwei-router-auf-einem-service)).
+9. Der Wechsler auf dem Mac meldet bei jedem Kontowechsel und alle fünf Minuten, welches Konto die Claude-Code-Sessions gerade nutzen (siehe [Wechsler-Anzeige](#wechsler-anzeige)).
+10. Der Empfänger in der Poller-Task prüft das Token und schreibt die Meldung als `swap.json`; die Seite markiert damit die Karte des aktiven Kontos.
 
-**Belegt gegen** `services/claude-usage.nomad` im Repo `homelab-nomad-jobs`, Stand 17.08.2026.
+**Belegt gegen** `services/claude-usage.nomad` im Repo `homelab-nomad-jobs`, Stand 07.09.2026.
 
 ## Datenquelle
 
@@ -144,10 +158,18 @@ Auf denselben Reset-Zeitpunkten sitzen die Meldungen: War ein Limit beim letzten
 
 ## Zwei Router auf einem Service
 
-Ein Consul-Service, zwei Traefik-Router: Die Seite läuft wie das interne Portal hinter `intern-auth@file`, `/usage.json` dagegen hinter `intern-api@file` ganz ohne Authentik. Der Grund sind Konsumenten ohne Browser -- ein Monitoring-Check oder ein Skript kann keinen Authentik-Redirect durchlaufen. Schreiben lässt sich über diesen Weg nichts mehr, nginx liefert die Datei nur aus. Beide Router tragen zusätzlich die ClientIP-Allowlist, der Dienst ist also weder für die Seite noch für die Daten von aussen erreichbar. Details zu den Ketten: [Traefik Referenz](../../edge/traefik/referenz.md).
+Ein Consul-Service, zwei Traefik-Router: Die Seite läuft wie das interne Portal hinter `intern-auth@file`, die Datenpfade `/usage.json`, `/swap.json` und `/api/swap` dagegen hinter `intern-api@file` ganz ohne Authentik. Der Grund sind Konsumenten ohne Browser -- ein Monitoring-Check, ein Skript oder der Wechsler auf dem Mac kann keinen Authentik-Redirect durchlaufen. Schreiben lässt sich über diesen Weg einzig die Wechsler-Meldung, und nur mit dem Bearer-Token, das der Empfänger in der Poller-Task prüft; die beiden JSON-Dateien liefert nginx nur aus. Beide Router tragen zusätzlich die ClientIP-Allowlist, der Dienst ist also weder für die Seite noch für die Daten von aussen erreichbar. Details zu den Ketten: [Traefik Referenz](../../edge/traefik/referenz.md).
 
 ::: warning Der Pfad-Router braucht eine explizite Priorität
 Ohne gesetzte Priorität sortiert Traefik nach Regel-Länge. Die lange Host- und ClientIP-Regel des Seiten-Routers schlug damit den kürzeren Pfad-Router, und `/usage.json` landete im Authentik-Zweig. Der Daten-Router trägt deshalb eine explizit gesetzte, deutlich höhere Priorität als jede implizite Regel-Länge erreichen kann.
+:::
+
+## Wechsler-Anzeige {#wechsler-anzeige}
+
+Welches Abo die Claude-Code-Sessions gerade nutzen, weiss nur der Mac: Dort tauscht der Live-Wechsler claude-swap die Credentials im Keychain (siehe [claude-rotate](../claude-rotate/index.md)). Sein Ereignis-Handler meldet deshalb bei jedem Wechsel und als Heartbeat alle fünf Minuten das aktive Konto an den Dienst. Die Seite zeigt unter dem Kopf Konto, Zeitpunkt des Wechsels, Auslöser und den meldenden Rechner und markiert die Karte des Kontos; bleibt die Meldung länger als fünfzehn Minuten aus, gilt der Stand als alt und wird entsprechend gekennzeichnet.
+
+::: warning Zwei Wege vom Mac
+Der Datenpfad ist nur aus dem internen Netz erreichbar. Hält auf dem Mac ein fremdes VPN (etwa das Campus-VPN der Hochschule) die Standardroute und den DNS, kommt die Meldung von aussen an und scheitert an der ClientIP-Allowlist. Der Handler versucht darum zuerst den DNS-Weg und danach direkt die Traefik-VIP über Tailscale. Dieselbe Falle traf am 7. September 2026 die Statusline in Claude Code, die seither ihre Kontozeilen nicht mehr vom Dienst, sondern lokal vom Wechsler bezieht.
 :::
 
 ## Token-Erneuerung
@@ -167,6 +189,7 @@ Poller-Mechanik, Konto-Zuordnung, Ping- und Melde-Logik und der Aufbau von `usag
 ## Verwandte Seiten
 
 - [Portale](../dashboards/index.md) -- internes Portal mit der Kachel zu diesem Dienst
+- [claude-rotate](../claude-rotate/index.md) -- Live-Wechsler claude-swap und Proxy, deren Zustand die Seite anzeigt
 - [ntfy](../ntfy/index.md) -- Push-Kanal der "wieder frei"-Meldungen
 - [Traefik Referenz](../../edge/traefik/referenz.md) -- Middleware-Ketten `intern-auth` und `intern-api`
 - [Authentik](../../edge/authentik/index.md) -- SSO vor der Seite (Gruppe `admin`)
